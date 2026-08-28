@@ -1,7 +1,7 @@
 # CurseRework
 
 **Table-based curse registry for The Binding of Isaac: Repentance.**
-Version 3.1· requires REPENTOGON
+Version 3.2· requires REPENTOGON
 
 ## Why
 
