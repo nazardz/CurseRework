@@ -1558,7 +1558,12 @@ function LOCAL_CURSEREWORK.Init()
 				if d and d.Name then names[#names + 1] = d.Name end
 			end
 			if #names == 0 then return end
-			game:GetHUD():ShowItemText(title, table.concat(names, ' + '), true)
+			for key, name in ipairs(names) do
+				Isaac.CreateTimer(function ()
+					-- idk what is StackUp text does
+					game:GetHUD():ShowItemText(title, name, true, true)
+				end, 22*(key-1), 1, false)
+			end
 			return false
 		end)
 	end
