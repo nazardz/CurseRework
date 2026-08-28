@@ -1,6 +1,6 @@
 --[[
 	CurseRework -- table based curse registry for The Binding of Isaac: Repentance
-	Version 3.1
+	Version 3.2
 
 	REPENTOGON 1.1.1+ is required. The fallback icon renderer uses Minimap.GetDisplayedSize(),
 	Minimap.GetState(), MC_INPUT_ACTION with InputHook, and MC_PRE_ITEM_TEXT_DISPLAY -- all
@@ -85,7 +85,7 @@
 		floor is cursed. Name one vanilla curse from your own content/curses.xml as Carrier and
 		its bit is mirrored into the real mask whenever any curse using it is active. One entry
 		covers all of your curses, so it costs a single slot rather than one per curse. Give it no
-		icon: REPENTOGON reads the "curses" animation of your content/gfx/mapitemicons.anm2 and
+		icon: REPENTOGON reads the "curses" animation of your content/gfx/OUT_mapitemicons.anm2 and
 		draws nothing for a curse with no frame there, so either leave the frame out or, if the
 		file holds icons you use elsewhere, name that animation something other than "curses".
 		The carrier stands in for whichever curse actually rolled, so a fixed icon would lie.
@@ -109,7 +109,7 @@
 local LOCAL_CURSEREWORK = {}
 
 function LOCAL_CURSEREWORK.Init()
-	local LOCAL_VERSION = 3
+	local LOCAL_VERSION = 3.2
 
 	local inheritedRegistry, inheritedOrder, inheritedSettings, inheritedRoll
 	local inheritedStorages, inheritedConfigBuilt
@@ -212,7 +212,7 @@ function LOCAL_CURSEREWORK.Init()
 	---@return boolean
 	local function VanillaHasIcons()
 		--- any curse bit means a slot, carriers included: the modded curse hook gates on the
-		--- owning mod's mapitemicons.anm2 having loaded, not on it holding a "curses" animation,
+		--- owning mod's OUT_mapitemicons.anm2 having loaded, not on it holding a "curses" animation,
 		--- so our carrier claims a slot and renders blank rather than nothing at all.
 		if game:GetLevel():GetCurses() ~= 0 then return true end
 		--- Mind replaces the other three with one icon, which does not matter for a yes/no
@@ -684,6 +684,12 @@ function LOCAL_CURSEREWORK.Init()
 
 	local function Roll(context)
 		local active = {}
+		--- CursedTrapdoorsMod (Accursed/Reflourished) is itself a rework of the vanilla per-floor
+		--- curse roll -- it decides the floor's curse, cursed trapdoors are just one path to it.
+		--- Rolling our own Chance-based curse independently on top of that produces two unrelated
+		--- curses on any floor it touches, not just ones reached through a trapdoor. While it's
+		--- present, defer entirely: the only curse we apply comes through a trapdoor grant.
+		if CursedTrapdoorsMod then return active end
 		--- a cursed trapdoor curse replaces the floor's roll instead of stacking on top of it
 		if Internal.PendingTrapdoorGrant then return active end
 
@@ -1458,6 +1464,12 @@ function LOCAL_CURSEREWORK.Init()
 	--- own curse evaluation. Returns the carrier mask to claim the floor; MC_POST_NEW_LEVEL then
 	--- finds the key already set and skips re-rolling. On already-cursed floors this does nothing
 	--- -- mods gate that through IsAllowed, same as the MC_POST_NEW_LEVEL path.
+	--- LATE priority: the trapdoor provider (Accursed/Reflourished) sets Internal.PendingTrapdoorGrant
+	--- from its own MC_POST_CURSE_EVAL handler (via POST_SET_LEVEL_CURSES). At default priority the
+	--- two mods' handlers race on load order -- when ours ran first, PendingTrapdoorGrant was still
+	--- nil, so Roll() didn't see it and rolled a real random curse via Chance, which then sat active
+	--- alongside the trapdoor-granted one applied later in MC_POST_NEW_LEVEL. Running last guarantees
+	--- the grant is already set before this roll checks for it.
 	AddCallback(ModCallbacks.MC_POST_CURSE_EVAL, function(selfRef, vanilla)
 		if vanilla ~= LevelCurse.CURSE_NONE then return end
 		--- carriers deferred: Level is not the new floor yet, so writing the mask here does
@@ -1474,7 +1486,7 @@ function LOCAL_CURSEREWORK.Init()
 		Internal.EvalMask = mask
 		if mask == 0 then return end
 		return mask
-	end)
+	end, nil, CallbackPriority and CallbackPriority.LATE)
 
 	AddCallback(ModCallbacks.MC_POST_NEW_LEVEL, function()
 		--- Reflourished only builds its global CursedTrapdoorsMod table from its own
@@ -1537,8 +1549,10 @@ function LOCAL_CURSEREWORK.Init()
 	--- the real active custom curse names. Pattern from real-world mods: call ShowItemText with
 	--- the replacement then return false to cancel the original display.
 	--- Callback signature: (selfRef, title, subtitle, isSticky, isCurseDisplay).
-	--- HUD:ShowItemText(main, secondary, IsCurseDisplay) -- the third argument is the curse
-	--- flag, not stickiness, and this replacement is always a curse.
+	--- HUD:ShowItemText(main, secondary, IsCurseDisplay, MultiText) -- the third argument is the
+	--- curse flag, not stickiness, and this replacement is always a curse. MultiText stacks this
+	--- call instead of it interrupting/replacing a still-showing one, used below to show every
+	--- active curse as its own line when multiple are active at once.
 	if ModCallbacks.MC_PRE_ITEM_TEXT_DISPLAY then
 		AddCallback(ModCallbacks.MC_PRE_ITEM_TEXT_DISPLAY, function(selfRef, title, subtitle, isSticky, isCurseDisplay)
 			if not isCurseDisplay then return end
@@ -1560,7 +1574,7 @@ function LOCAL_CURSEREWORK.Init()
 			if #names == 0 then return end
 			for key, name in ipairs(names) do
 				Isaac.CreateTimer(function ()
-					-- idk what is StackUp text does
+					-- idk what is StackUp text, prolly it was added in Rep+ newer version?
 					game:GetHUD():ShowItemText(title, name, true, true)
 				end, 22*(key-1), 1, false)
 			end
