@@ -1,3 +1,5 @@
+-- AI genereated examples
+
 --[[
 	CurseRework example mod.
 
