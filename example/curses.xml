@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The carrier. See the "Carriers" section of the lib README.
+
+     This is NOT a curse of its own. Its bit is set in the vanilla curse mask while any of
+     this mod's table curses is active, so Black Candle, Level:RemoveCurses and every other
+     mod's "is this floor cursed" check keep working.
+
+     One entry covers every curse this mod registers, so it costs a single one of the game's
+     ~24 remaining custom slots instead of one per curse.
+
+     Give it no icon. Do not ship a content/gfx/mapitemicons.anm2 with a "curses" animation
+     unless you mean to -- REPENTOGON draws that animation for your curse bit, and a fixed
+     icon would lie about which curse actually rolled. CurseRework draws the real per-curse
+     icon itself, from resources/gfx/ui/example_curse_icons.anm2. -->
+<curses>
+	<curse name="Curse of the Example!" />
+</curses>
