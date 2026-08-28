@@ -1,6 +1,6 @@
 --[[
 	CurseRework -- table based curse registry for The Binding of Isaac: Repentance
-	Version 3
+	Version 3.1
 
 	REPENTOGON 1.1.1+ is required. The fallback icon renderer uses Minimap.GetDisplayedSize(),
 	Minimap.GetState(), MC_INPUT_ACTION with InputHook, and MC_PRE_ITEM_TEXT_DISPLAY -- all
