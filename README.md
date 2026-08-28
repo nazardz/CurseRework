@@ -1,7 +1,7 @@
 # CurseRework
 
 **Table-based curse registry for The Binding of Isaac: Repentance.**
-Version 3 · single file · requires REPENTOGON 1.1.1+
+Version 3.0· requires REPENTOGON
 
 ## Why
 
@@ -17,21 +17,6 @@ Drop `curse_rework.lua` into your own mod and call `.Init()`:
 ```lua
 include("scripts_yourmod.lib.curse_rework").Init()
 ```
-
-Every host carries its own copy. On load the copies elect a winner:
-
-| Situation | Result |
-|---|---|
-| No `CurseRework` global yet | This copy becomes it |
-| An **older** copy is loaded | This copy takes over, inheriting its registry, settings, roll knobs, storages and MCM-built flags |
-| A **newer** copy is loaded | `Init()` returns that copy untouched |
-
-Because the takeover inherits everything, mods that loaded *before* the winner keep their
-registrations. `luamod` is safe: re-registering the same `Id` overwrites in place.
-
-Active curses are **derived from the stage seed, not saved**, so they survive a save slot being
-copied, a host mod being disabled, or the elected copy changing hands. Only settings and manual
-`Add`/`Remove` calls are written to disk.
 
 ## Quick start
 
@@ -105,20 +90,6 @@ Handed to `IsAllowed`, function weights, and both callbacks:
 
 Deterministic from `Seeds:GetStageSeed(stage)`, so the same seed always produces the same curses.
 
-1. **`PRE_CURSE_ROLL`** fires. Returning `false` leaves the floor uncursed; returning an id (or an
-   array of ids) forces exactly those and **skips every step below**, Black Candle included.
-2. **Black Candle** — if any player holds it, the floor stays uncursed.
-3. **Pool build** — a curse is in the pool when its weight is `> 0` *and* it is enabled *and* it
-   passes the Greed Mode / Ascent / uncursable-stage gates *and* `IsAllowed` returns truthy.
-4. **`Chance`** roll — if it fails, the floor stays uncursed.
-5. **Weighted pick** from the pool.
-6. **Extra curses** — while fewer than `MaxCurses` have been picked and `ExtraChance > 0`, roll
-   again; each extra costs its own `ExtraChance` roll, and the pool is rebuilt minus what is taken.
-7. **`POST_CURSE_ROLL`** fires with the sorted active ids.
-
-Manual `Add` stacks on top regardless of `MaxCurses`, and every active curse gets its own icon
-either way.
-
 ## Settings
 
 ### Roll knobs
@@ -150,26 +121,6 @@ CurseRework.AddConfigMenu({
 })
 ```
 
-`Roll = false` drops the three roll sliders, for a second tab that should only carry its own
-curses. Leave it on in exactly one place, or the knobs appear twice.
-
-### Persistence
-
-By default settings live in CurseRework's own save file, which follows whichever embedded copy got
-elected. A mod with a save system of its own should claim a place for the curses it registered —
-storage is **per mod**, so uninstalling one never drops another's settings:
-
-```lua
-CurseRework.SetStorage(myMod, {
-    Save = function(encoded) ... end,   -- encoded is a JSON string
-    Load = function() return encoded end,
-})
-CurseRework.ReloadSettings()   -- if SetStorage ran before that save system was up
-```
-
-First caller for a given mod wins. A store only ever holds its own owner's ids, so merging across
-stores cannot clobber.
-
 ## Carriers
 
 Curses live in a table, so `Level:GetCurses()` does not know about them — and neither does anything
@@ -180,23 +131,6 @@ the real mask whenever any curse using it is active. **One entry covers all of y
 costs a single one of the game's ~24 custom slots rather than one per curse. A name that does not
 resolve to a usable slot is logged and the curse runs table-only.
 
-Give the carrier **no icon**. REPENTOGON reads the `curses` animation of your
-`content/gfx/mapitemicons.anm2` and draws nothing for a curse with no frame there, so either leave
-the frame out or — if that file holds icons you use elsewhere — name the animation something other
-than `curses`. The carrier stands in for whichever curse actually rolled, so a fixed icon would lie.
-
-It still *claims* a slot in the game's icon row and renders blank.
-
-The mirror is one-way with one exception: **clearing that bit from outside removes the curses behind
-it**. That is what makes Black Candle and `RemoveCurses` work.
-
-Mask carriers out of your own "is this floor already cursed" tests:
-
-```lua
-local otherCurses = Game():GetLevel():GetCurses() & ~CurseRework.GetCarrierMask()
-```
-
-Everything still works with no carrier, just without the mirror.
 
 ### Sharing one between mods
 
@@ -225,16 +159,6 @@ Nothing to wire up. If **Accursed!** or **Isaac Reflourished** is installed, the
 **one trapdoor entry per carrier bit**, so a mod spends one of the provider's slots rather than one
 per curse. Any curse registered with an `Icon` takes part.
 
-Stepping on a trapdoor grants exactly the curse it was showing, replacing the floor's roll rather
-than stacking on it. The entry drops out of the pool while no curse behind it can be offered.
-
-**A trapdoor is not an exemption from the gates.** The candidate is drawn while the player is still
-on the previous floor, so `IsAllowed` and the Ascent / uncursable-stage checks are being asked about
-the wrong floor there — only the run-wide gates (enabled, Greed Mode, the challenge filter) are
-reliable at draw time. The grant is therefore re-checked at `MC_POST_NEW_LEVEL`, where the
-destination floor is finally the current one, and a curse that floor would refuse is dropped rather
-than forced through. In that case the floor simply stays uncursed.
-
 **Each trapdoor shows its own curse**, keyed on its spawn seed, so a floor with three trapdoors
 offers three choices. Which provider is installed is detected automatically, and both give the full
 behaviour.
@@ -244,7 +168,7 @@ CurseRework.Trapdoor.Weight   = 3    -- pool weight for the entry; it stands in 
 CurseRework.Trapdoor.RngShift = 36   -- shift for the per-trapdoor candidate draw
 ```
 
-Shared across consumers, same last-writer-wins caveat as the roll knobs.
+Shared across consumers. (last-writer-wins)
 
 ## Rendering
 
@@ -257,17 +181,9 @@ CurseRework.Render.RowStep = Vector(0, 16)    -- between rows
 ```
 
 With **MinimapAPI** present, icons sit under the map next to the vanilla ones and stack properly.
-Without it, CurseRework draws its own fallback strip below the minimap, from `Anchor()` growing by
-`Step`, fading with the game's `MapOpacity` unless the map is expanded.
+Without it, CurseRework draws its own fallback strip below the minimap.
 
-That strip gets **its own row**, below the one the game draws for map items and curses — `Anchor`
-drops by `RowStep` whenever the game is drawing anything there. `PerRow` defaults to 7 to match the
-game's own cap, so the rows line up; past 7 active curses the strip wraps onto another row.
-
-There is no announce setting: the floor's curse text is the game's own, with the carrier name
-swapped for the real curse names through `MC_PRE_ITEM_TEXT_DISPLAY`.
-
-Shared across consumers, same last-writer-wins caveat as the roll knobs.
+Shared across consumers. (last-writer-wins)
 
 ## Callbacks
 
@@ -345,12 +261,3 @@ none survive, the roll proceeds normally.
 - **`MC_PRE_MOD_UNLOAD`**'s `ShuttingDown` argument — settings would be lost on a disable or
   reload without a flush.
 
-## Gotchas
-
-- **`Id` is forever.** It is the save key. Renaming one resets that curse's settings.
-- Overrides (`Add` / `Remove`) are persisted and last **the floor**, keyed to level identity. They
-  survive a `luamod` too: the takeover inherits them, since the rolled curses come back on their own
-  from the stage seed but forced ones would not.
-- Registering, or changing any setting, invalidates the cached roll — the next query re-rolls.
-- Greed Mode, the Ascent and Home are opt-in per curse (`AllowGreedMode`, `AllowAscent`,
-  `AllowUncursableStages`).
