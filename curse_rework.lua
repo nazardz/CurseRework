@@ -1,6 +1,6 @@
 --[[
 	CurseRework -- table based curse registry for The Binding of Isaac: Repentance
-	Version 3.2
+	Version 3.3
 
 	REPENTOGON 1.1.1+ is required. The fallback icon renderer uses Minimap.GetDisplayedSize(),
 	Minimap.GetState(), MC_INPUT_ACTION with InputHook, and MC_PRE_ITEM_TEXT_DISPLAY -- all
@@ -78,6 +78,14 @@
 			                               Load = function() return encoded end})
 			CurseRework.ReloadSettings()   -- if SetStorage ran before that save system was up
 
+		The roll knobs, manual Add/Remove overrides and any ownerless curse settings live in the
+		default store. Unclaimed, CurseRework writes it with its own SaveData -- which is your save
+		file, since Isaac keys mod data by folder, and SaveData replaces the file whole. If your
+		save system writes that file too, claim the default store as well or it will be wiped:
+
+			CurseRework.SetDefaultStorage({Save = function(encoded) ... end,
+			                               Load = function() return encoded end})
+
 	Carriers:
 
 		Curses live in a table, so Level:GetCurses() does not know about them and neither does
@@ -109,7 +117,7 @@
 local LOCAL_CURSEREWORK = {}
 
 function LOCAL_CURSEREWORK.Init()
-	local LOCAL_VERSION = 3.2
+	local LOCAL_VERSION = 3.3
 
 	local inheritedRegistry, inheritedOrder, inheritedSettings, inheritedRoll
 	local inheritedStorages, inheritedConfigBuilt
@@ -359,10 +367,11 @@ function LOCAL_CURSEREWORK.Init()
 	--- Every mod's curse settings are stored separately: a consumer registers storage for its own
 	--- mod with CurseRework.SetStorage(myMod, ...) and only its own curses are written there, so
 	--- one mod being uninstalled never takes another mod's settings with it. Curses whose owner
-	--- registered nothing fall back to CurseRework's own save file, which follows whichever
-	--- embedded copy got elected -- which is exactly why a mod with a real save system should
-	--- claim its own. The roll knobs belong to nobody in particular, so they are mirrored into
-	--- every store and the first one found on load wins.
+	--- registered nothing fall back to the default store ("" bucket), which also carries the
+	--- overrides. Unless a host claims it with SetDefaultStorage, that is CurseRework's own save
+	--- file -- physically the elected host's save file, since Isaac ties mod data to the folder
+	--- RegisterMod ran from, and SaveData replaces it whole. The roll knobs belong to nobody in
+	--- particular, so they are mirrored into every store and the default one wins on load.
 
 	---@return string owner key for a curse definition, "" when it has no identifiable owner
 	local function OwnerKey(def)
@@ -458,7 +467,9 @@ function LOCAL_CURSEREWORK.Init()
 		end
 
 		for ownerKey in pairs(Internal.Storages) do
-			absorb(StoreRead(ownerKey))
+			if ownerKey ~= "" then
+				absorb(StoreRead(ownerKey))
+			end
 		end
 	end
 	Internal.Load = Load
@@ -480,6 +491,22 @@ function LOCAL_CURSEREWORK.Init()
 			return false
 		end
 		Internal.Storages[ownerKey] = storage
+		Load(false)
+		return true
+	end
+
+	---Claims the default store: the roll knobs, manual Add/Remove overrides, and the settings of
+	---curses whose owner never called SetStorage. Unclaimed, it goes through CurseRework's own
+	---SaveData -- the elected host's save file, replaced wholesale on every write -- so a host
+	---whose save system owns that file must claim this too. First caller wins.
+	---@param storage {Save: fun(encoded: string), Load: fun(): string|nil}
+	function CurseRework.SetDefaultStorage(storage)
+		if Internal.Storages[""] then return false end
+		if type(storage) ~= "table" or type(storage.Save) ~= "function" or type(storage.Load) ~= "function" then
+			LOG("SetDefaultStorage needs a table with Save and Load functions")
+			return false
+		end
+		Internal.Storages[""] = storage
 		Load(false)
 		return true
 	end
