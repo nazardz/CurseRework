@@ -1,7 +1,7 @@
 # CurseRework
 
 **Table-based curse registry for The Binding of Isaac: Repentance.**
-Version 3.2· requires REPENTOGON
+Version 3.3 · requires REPENTOGON
 
 ## Why
 
@@ -121,6 +121,44 @@ CurseRework.AddConfigMenu({
 })
 ```
 
+### Storage
+
+Settings are written in two kinds of store:
+
+| Store | Holds | Claimed with |
+|---|---|---|
+| Per mod | `Enabled`/`Weight` of the curses registered with that `Mod` | `SetStorage(owner, storage)` |
+| Default | The roll knobs, manual `Add`/`Remove` overrides, and settings of curses whose owner claimed nothing | `SetDefaultStorage(storage)` |
+
+Both take the same `storage` table and both are first-caller-wins. Storage is per mod, so
+uninstalling one mod never takes another mod's settings with it. The roll knobs are mirrored into
+every store; on load the default store wins.
+
+An unclaimed store falls back to CurseRework's own `SaveData`. **That is your mod's save file.**
+Isaac keys mod data by the folder `RegisterMod` ran from, and the lib registers from inside your
+mod. `SaveData` also replaces the file whole, so:
+
+- **Your mod has no save system of its own:** skip both calls, the lib's file is yours to lend.
+- **Your mod writes its own save file** (a save manager, `mod:SaveData`, anything): claim
+  **both** stores. Otherwise the two of you overwrite each other's file, and whenever the lib
+  happens to write last, all of your mod's saved data is gone.
+
+```lua
+local function Store(key)
+    return {
+        Save = function(encoded) mySave.settings[key] = encoded; mySave:Flush() end,   -- encoded is a JSON string
+        Load = function() return mySave.settings[key] end,                             -- nil when nothing was saved
+    }
+end
+
+CurseRework.SetStorage(mod, Store("CurseRework"))
+CurseRework.SetDefaultStorage(Store("CurseReworkDefault"))
+CurseRework.ReloadSettings()   -- only needed if you claimed them before your save was loaded
+```
+
+Flush to disk inside `Save`: the lib saves when a setting changes in the config menu and when the
+game closes, and save systems commonly skip their own auto-save while on the title or Mods menu.
+
 ## Carriers
 
 Curses live in a table, so `Level:GetCurses()` does not know about them — and neither does anything
@@ -237,7 +275,8 @@ none survive, the roll proceeds normally.
 | `GetWeight(id)` / `SetWeight(id, number)` | |
 | `GetRoll(name)` / `SetRoll(name, value)` | `"Chance"`, `"MaxCurses"`, `"ExtraChance"` |
 | `ResetSettings(filter)` | back to registered defaults; `filter(def)` optional |
-| `SetStorage(owner, storage)` | `boolean` |
+| `SetStorage(owner, storage)` | `boolean` — claims the store for `owner`'s curses, see [Storage](#storage) |
+| `SetDefaultStorage(storage)` | `boolean` — claims the default store, see [Storage](#storage) |
 | `ReloadSettings()` | re-reads every store |
 | `AddConfigMenu(config)` | `boolean` built |
 

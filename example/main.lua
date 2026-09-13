@@ -104,26 +104,40 @@ local SWARM = CurseRework.Register({
 })
 
 ---------------------------------------------------------------------------
---- Settings storage (optional)
+--- Settings storage (required if your mod saves its own data)
 ---------------------------------------------------------------------------
 
---- Skip this whole block and the settings live in CurseRework's own save file, which follows
---- whichever embedded copy got elected. Claim them here if your mod has a save system of its
---- own and you would rather they travelled with it.
+--- This example has no save system, so it skips this block and the settings live in
+--- CurseRework's own save file.
 ---
---- Storage is per mod: only the curses registered with Mod = mod are written here, so another
---- mod being uninstalled never takes yours with it, and yours never clobbers theirs.
+--- That file is YOUR mod's save file: Isaac keys mod data by the folder RegisterMod ran from,
+--- and the lib registers from inside your mod. Its SaveData also replaces the file whole. So
+--- the moment your mod writes its own save (a save manager, mod:SaveData, anything), claim
+--- BOTH stores below -- otherwise every lib write wipes your data.
+---
+---   SetStorage         Enabled/Weight of the curses registered with Mod = mod. Per mod, so
+---                      another mod being uninstalled never takes yours with it.
+---   SetDefaultStorage  The roll knobs, manual Add/Remove overrides, and any curse whose owner
+---                      claimed nothing.
 --[[
-CurseRework.SetStorage(mod, {
-	Save = function(encoded)        -- encoded is a JSON string
-		MySaveSystem.settings.CurseRework = encoded
-	end,
-	Load = function()
-		return MySaveSystem.settings.CurseRework
-	end,
-})
+local function Store(key)
+	return {
+		Save = function(encoded)        -- encoded is a JSON string
+			MySaveSystem.settings[key] = encoded
+			--- flush to disk now: the lib saves from the config menu and on game close, and
+			--- save systems often skip their own auto-save on the title / Mods menu
+			MySaveSystem:Flush()
+		end,
+		Load = function()               -- nil when nothing was saved yet
+			return MySaveSystem.settings[key]
+		end,
+	}
+end
 
---- Only needed if SetStorage ran before your save system was up.
+CurseRework.SetStorage(mod, Store("CurseRework"))
+CurseRework.SetDefaultStorage(Store("CurseReworkDefault"))
+
+--- Only needed if you claimed them before your save system was up.
 CurseRework.ReloadSettings()
 ]]
 
