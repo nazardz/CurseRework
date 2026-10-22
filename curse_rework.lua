@@ -20,6 +20,10 @@
 
 		include("path.to.curse_rework").Init()
 
+	Always go through the CurseRework global, never a local holding what Init() returned -- a
+	newer copy taking over would leave you calling a dead one. Guard with "if not CurseRework" if
+	your mod should survive without the file. A full working mod lives in the repo's example/.
+
 	Active curses are derived from the stage seed rather than saved, so they survive a save slot
 	being copied, a host mod being disabled, or the elected copy changing hands. Settings and
 	manual Add/Remove calls are the only things written to disk.
@@ -43,11 +47,30 @@
 			AllowUncursableStages = false,              -- optional, off: skip Home
 		})
 
+	The Id is the save key: renaming it resets that curse's settings, and registering the same Id
+	again replaces the earlier definition. Only the fields above are kept -- extra keys (say
+	Group = "Blessings") are dropped, so Filter callbacks cannot see them; group by Id instead. A
+	curse without an Icon shows no HUD icon and never appears in cursed trapdoors. IsAllowed and
+	function weights that error are logged and treated as "not allowed" / weight 0.
+
 	Vanilla blocks its own curse roll in Greed Mode, on the Ascent and on Home, so those three are
 	off by default here too. On the Ascent it does not even fire MC_POST_CURSE_EVAL, which is why
 	the gate lives in eligibility rather than in that hook. Basement 1 is deliberately left
 	cursable, unlike vanilla, which forces the chance to 0 there until Everything Is Terrible is
 	unlocked.
+
+	How a floor rolls, seeded from the stage seed:
+		1. Accursed! or Isaac Reflourished installed: no floor roll at all, curses only come
+		   through cursed trapdoors (those mods already replace the vanilla roll).
+		2. PRE_CURSE_ROLL: false leaves the floor clean, returned ids are forced and skip every
+		   check below -- they only need to be registered.
+		3. Black Candle on any player: nothing rolls.
+		4. Pool: weight > 0, then enabled -> Greed Mode -> Ascent -> challenge curse filter (on the
+		   carrier bit) -> Home -> IsAllowed.
+		5. Chance decides whether the floor is cursed at all, then one weighted pick.
+		6. While fewer than MaxCurses are active, each extra curse needs its own ExtraChance roll;
+		   the first miss stops it.
+	The roll is separate from vanilla's, so a floor can carry one of each.
 
 	Settings and the config menu:
 
@@ -65,10 +88,28 @@
 			CurseRework.AddConfigMenu({
 				ModName = "Eclipsed",                        -- your MCM category
 				Category = "Curses",                         -- the tab inside it
-				Filter = function(def) return def.Mod == myMod end,  -- optional
+				Filter = function(def) return def.Mod == myMod end,  -- optional, see below
+				Title = "Curse rolling",                     -- optional, heading above the knobs
 				Roll = true,                                 -- optional, roll knobs, on by default
 				PerCurse = function(def) ... end,            -- optional, append your own widgets
 			})
+
+		- One call per tab. A ModName + Category pair is built once; later calls for it are
+		  ignored and return false, so a tab cannot be extended. Give that one call a Filter that
+		  accepts everything the tab should hold. Several tabs = several Categories.
+		- Filter gets the curse definition (the Register fields). Without one, the tab lists every
+		  curse of every mod using CurseRework. Filter = function() return false end gives a tab
+		  with only the roll knobs.
+		- Call it after Register: it lists what is registered at that moment, in Id order. Use
+		  MC_POST_MODS_LOADED to include other mods' curses.
+		- The roll knobs are global, so keep Roll on for one tab only. Title is the heading above
+		  them and is not shown with Roll = false.
+		- PerCurse runs after each curse's weight slider and only receives def, so it must bring
+		  its own ModName/Category for ModConfigMenu calls. What it adds is yours to save.
+		- MCM cannot drop entries, and the built flag survives luamod on purpose, so menu changes
+		  need a game restart.
+		- Curses with a function Weight get no slider. Sliders run 0..5 in steps of 0.1.
+		- Returns true when built; false without MCM, with a bad config, or when already built.
 
 		By default settings live in CurseRework's own save file, which follows whichever embedded
 		copy got elected. A mod with a save system of its own should claim a place for the curses
@@ -97,8 +138,9 @@
 		draws nothing for a curse with no frame there, so either leave the frame out or, if the
 		file holds icons you use elsewhere, name that animation something other than "curses".
 		The carrier stands in for whichever curse actually rolled, so a fixed icon would lie.
-		Clearing that bit from outside removes the curses behind it. Use CurseRework.GetCarrierMask() to mask carriers out of your own "is this floor
-		already cursed" tests. Everything still works with no carrier, just without the mirror.
+		Clearing that bit from outside removes the curses behind it. Use
+		CurseRework.GetCarrierMask() to mask carriers out of your own "is this floor already
+		cursed" tests. Everything still works with no carrier, just without the mirror.
 
 	Querying it:
 
