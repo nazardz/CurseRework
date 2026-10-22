@@ -18,6 +18,23 @@ Drop `curse_rework.lua` into your own mod and call `.Init()`:
 include("scripts_yourmod.lib.curse_rework").Init()
 ```
 
+### Embedding and versions
+
+- **Embed, don't depend.** Ship the file inside your mod. Do not publish CurseRework as a standalone
+  Workshop mod: Isaac has no dependency resolution, so your mod would break the moment a user forgot
+  to subscribe.
+- **Highest version wins.** Every mod carries its own copy. `Init()` elects the newest one present,
+  and it inherits everything older copies already registered, so load order does not matter.
+- **Always go through the `CurseRework` global.** Never keep the result of `Init()` in a local — a
+  newer copy taking over later would leave you calling a dead one.
+- **Guard it** if you want your mod to survive without the file: `if not CurseRework then return end`.
+- **Active curses are not saved.** They are derived from the stage seed, so they survive copied save
+  slots, disabled host mods and the elected copy changing hands. Only settings and manual
+  `Add`/`Remove` calls are written to disk.
+
+A complete working mod lives in [`example/`](example/main.lua): three curses showing a fixed weight,
+an `IsAllowed` gate and a function weight.
+
 ## Quick start
 
 ```lua
@@ -32,6 +49,7 @@ local VOID = CurseRework.Register({
     Name   = "Curse of the Void!",
     Icon   = {icons, "curses", 0},
     Weight = 1.0,
+    Mod    = mod,   -- needed for the Filter below
 })
 
 mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function()
@@ -63,6 +81,14 @@ CurseRework.AddConfigMenu({ModName = "My Mod", Category = "Curses",
 | `AllowAscent` | `boolean` | no | Off by default — curses skip the Ascent, which vanilla never curses |
 | `AllowUncursableStages` | `boolean` | no | Off by default — curses skip Home (`STAGE8`) |
 
+- **The `Id` is the save key.** Renaming one resets that curse's saved settings.
+- **Registering the same `Id` again replaces** the earlier definition.
+- **Only the fields above are kept.** Extra keys you pass (say `Group = "Blessings"`) are dropped, so
+  `Filter` and other callbacks cannot see them — group curses by `Id` instead.
+- **Without an `Icon`**, a curse shows no HUD icon and never appears in [cursed trapdoors](#cursed-trapdoors).
+- **Errors are contained.** An `IsAllowed` or `Weight` function that errors is logged and treated as
+  "not allowed" / weight `0`.
+
 ### Weights
 
 A **number** is only the *reset* value: from then on the player's setting owns it.
@@ -89,6 +115,25 @@ Handed to `IsAllowed`, function weights, and both callbacks:
 ## How a floor rolls
 
 Deterministic from `Seeds:GetStageSeed(stage)`, so the same seed always produces the same curses.
+In order:
+
+1. **Cursed trapdoor mods.** If Accursed! or Isaac Reflourished is installed, the floor roll is
+   skipped entirely — curses only arrive through [cursed trapdoors](#cursed-trapdoors). A curse
+   granted by a trapdoor also replaces the roll on the floor it leads to.
+2. **`PRE_CURSE_ROLL`.** `false` leaves the floor uncursed. Returning ids forces them and ends the
+   roll — forced curses skip every check below, they only need to be registered.
+3. **Black Candle.** If any player holds it, nothing rolls.
+4. **Pool.** Every curse with a weight above `0` that passes, in this order: enabled → Greed Mode →
+   Ascent → the active challenge's curse filter (applied to the curse's carrier bit) → Home →
+   `IsAllowed`.
+5. **`Chance`.** One roll decides whether the floor is cursed at all.
+6. **First curse**, picked from the pool by weight.
+7. **Extra curses.** While fewer than `MaxCurses` are active, each further curse needs its own
+   `ExtraChance` roll and is picked from what is left of the pool. The first failed roll stops it.
+
+The roll is separate from vanilla's: a floor can carry a vanilla curse and a CurseRework curse at
+once. Use `IsAllowed` with [`GetCarrierMask()`](#carriers) if you want your curses to stay off floors
+the game already cursed. Unlike vanilla, Basement 1 is cursable.
 
 ## Settings
 
@@ -107,8 +152,8 @@ nothing to build. Defaults reproduce vanilla behaviour: at most one curse per fl
 
 ### Mod Config Menu
 
-One call builds the whole tab — roll knobs, then an enable toggle and a weight slider per curse —
-under your own MCM category:
+One call builds a whole tab — roll knobs, then for each curse a heading, its description, an enable
+toggle and a weight slider — under your own MCM category:
 
 ```lua
 CurseRework.AddConfigMenu({
@@ -120,6 +165,101 @@ CurseRework.AddConfigMenu({
     PerCurse = function(def) ... end,                       -- optional, append your own widgets
 })
 ```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `ModName` | **yes** | MCM category (the entry in the mod list) |
+| `Category` | **yes** | Tab inside that category |
+| `Filter` | no | `fun(def) -> boolean`, which curses this tab lists. **Without it, the tab lists every curse of every mod using CurseRework** |
+| `Roll` | no | `false` hides the roll knobs. On by default |
+| `Title` | no | Heading above the roll knobs; not shown when `Roll = false` |
+| `PerCurse` | no | `fun(def)`, called once per listed curse to add your own widgets, see below |
+
+Returns `true` when the tab was built, `false` when Mod Config Menu is missing, the config is
+invalid, or the tab was already built.
+
+**Rules that trip people up:**
+
+- **One call per tab.** Each `ModName` + `Category` pair is built once; any later call for the same
+  pair is ignored and returns `false`. You cannot add curses to a tab with a second call — one call,
+  one `Filter` that accepts everything the tab should hold.
+- **Register first.** The tab lists the curses registered *at the moment of the call*. Call it after
+  your `Register` calls; to include curses from other mods, call it in `MC_POST_MODS_LOADED`.
+- **Order is by `Id`**, not registration order.
+- **Restart the game after changing menu code.** MCM cannot remove entries, so a `luamod` reload
+  keeps the old tab (the "already built" flag survives the reload on purpose, or every entry would
+  double).
+- **The roll knobs are global.** Every tab with `Roll` on shows the same three sliders. Keep them on
+  one tab and pass `Roll = false` everywhere else.
+- **No weight slider** for a curse whose `Weight` is a function — the player's number would be
+  ignored. Sliders run from `0` to `5` in steps of `0.1`.
+
+#### Filter
+
+`Filter` receives the curse's definition: `Id`, `Name`, `Description`, `Mod`, `Weight`,
+`DefaultEnabled`, `Carrier`, … — the [registration fields](#registering-a-curse), nothing else.
+
+```lua
+Filter = function(def) return def.Mod == mod end                   -- every curse your mod registered
+Filter = function(def) return def.Id:find("^mymod:room_") ~= nil end  -- by id prefix
+Filter = function(def) return false end                            -- no curses: a roll-knobs-only tab
+```
+
+#### Several tabs
+
+One call per tab, each with its own `Filter`, roll knobs on only one of them:
+
+```lua
+local tabs = {
+    Rooms   = { ["mymod:void"] = true, ["mymod:fool"] = true },
+    Enemies = { ["mymod:pride"] = true },
+}
+
+CurseRework.AddConfigMenu({ModName = "My Mod", Category = "General",
+                           Filter = function(def) return false end})   -- roll knobs only
+
+for _, category in ipairs({"Rooms", "Enemies"}) do                     -- ipairs keeps tab order
+    local ids = tabs[category]
+    CurseRework.AddConfigMenu({
+        ModName  = "My Mod",
+        Category = category,
+        Roll     = false,
+        Filter   = function(def) return ids[def.Id] end,
+    })
+end
+```
+
+Ids containing `:` must be written as `["mymod:void"] = true` — a bare `"mymod:void" = true` is a
+Lua syntax error. Keeping the value `Register` returns in a local and writing `[VOID] = true` avoids
+typos altogether.
+
+#### PerCurse
+
+Called for each listed curse after its weight slider and before the spacer, so whatever it adds sits
+under that curse. It only receives `def` — pass your own `ModName`/`Category` to the MCM calls:
+
+```lua
+local MOD_NAME, TAB = "My Mod", "Curses"
+
+CurseRework.AddConfigMenu({
+    ModName  = MOD_NAME,
+    Category = TAB,
+    Filter   = function(def) return def.Mod == mod end,
+    PerCurse = function(def)
+        if def.Id ~= VOID then return end   -- only the void curse has an extra knob
+        ModConfigMenu.AddSetting(MOD_NAME, TAB, {
+            Type = ModConfigMenu.OptionType.NUMBER,
+            CurrentSetting = function() return mySettings.VoidChance end,
+            Minimum = 0, Maximum = 100,
+            Display = function() return "Room reroll chance: " .. mySettings.VoidChance .. "%" end,
+            OnChange = function(n) mySettings.VoidChance = n end,
+        })
+    end,
+})
+```
+
+Settings added this way are yours to save; CurseRework only stores `Enabled`, `Weight` and the roll
+knobs.
 
 ### Storage
 
@@ -169,6 +309,16 @@ the real mask whenever any curse using it is active. **One entry covers all of y
 costs a single one of the game's ~24 custom slots rather than one per curse. A name that does not
 resolve to a usable slot is logged and the curse runs table-only.
 
+- **Give the carrier no icon.** It stands in for whichever curse actually rolled, so a fixed icon
+  would lie. REPENTOGON reads the `"curses"` animation of your `content/gfx/OUT_mapitemicons.anm2`
+  and draws nothing for a curse with no frame there — leave the frame out, or name that animation
+  something else if the file holds icons you use elsewhere.
+- **Clearing the bit removes the curses.** The carrier is a mirror, except in one direction: if
+  something else clears it (Black Candle, `Level:RemoveCurses`), the curses behind it go too.
+- **Mask carriers out of your own checks.** `Level:GetCurses()` now includes your carrier bit, so
+  "is this floor already cursed by the game" needs `GetCurses() & ~CurseRework.GetCarrierMask()`.
+- **No carrier is fine too** — everything works, just without the mirror.
+
 
 ### Sharing one between mods
 
@@ -200,6 +350,10 @@ per curse. Any curse registered with an `Icon` takes part.
 **Each trapdoor shows its own curse**, keyed on its spawn seed, so a floor with three trapdoors
 offers three choices. Which provider is installed is detected automatically, and both give the full
 behaviour.
+
+**While a provider is installed, the normal floor roll is off.** Those mods replace the vanilla curse
+roll themselves, so rolling ours on top would give unrelated double curses. CurseRework curses then
+arrive only through trapdoors, and `Chance` / `MaxCurses` / `ExtraChance` have no effect.
 
 ```lua
 CurseRework.Trapdoor.Weight   = 3    -- pool weight for the entry; it stands in for many curses
@@ -284,7 +438,8 @@ none survive, the roll proceeds normally.
 
 | Field | Meaning |
 |---|---|
-| `CurseRework.Version` | Integer, for the election |
+| `CurseRework.Version` | Number (`3.3`), compared for the election |
+| `CurseRework.Trapdoor` | Cursed trapdoor settings (`Weight`, `RngShift`) |
 | `CurseRework.Callbacks` | Callback id constants |
 | `CurseRework.RollDefaults` | Reset values for the roll knobs |
 | `CurseRework.Render` | Icon and layout settings (`Icons`, `Anchor`, `Step`, `PerRow`, `RowStep`) |
@@ -294,9 +449,10 @@ none survive, the roll proceeds normally.
 
 - **`Minimap.GetDisplayedSize()`** / **`Minimap.GetState()`** — the fallback icon strip has to sit
   under the map at whatever height it is actually drawn.
+- **`MC_INPUT_ACTION`** with **`InputHook`** — tracks the map button per controller, so the fallback
+  icon strip follows the expanded map.
 - **`MC_PRE_ITEM_TEXT_DISPLAY`** — the HUD would otherwise announce the carrier's name instead of
   the curse that actually rolled.
 - **`MC_POST_MODS_LOADED`** — MinimapAPI may load after you register, so the flags need a re-sync.
 - **`MC_PRE_MOD_UNLOAD`**'s `ShuttingDown` argument — settings would be lost on a disable or
   reload without a flush.
-
